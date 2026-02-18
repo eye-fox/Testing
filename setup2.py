@@ -288,20 +288,22 @@ def setup_html_project(working_dir, app_name, app_id, version_name, version_code
     manifest_path = os.path.join(abs_dir, "android", "app", "src", "main", "AndroidManifest.xml")
     if not os.path.exists("www"):
         os.makedirs("www", exist_ok=True)
+    exclude_files = ['icon.png', 'config.json', os.path.basename(__file__)]
     for item in os.listdir("."):
-        if item not in ["www", "node_modules", os.path.basename(__file__)]:
-            src_path = os.path.join(".", item)
-            dst_path = os.path.join("www", item)
-            if os.path.isfile(src_path):
-                try:
-                    shutil.move(src_path, dst_path)
-                except:
-                    pass
-            elif os.path.isdir(src_path):
-                try:
-                    shutil.move(src_path, dst_path)
-                except:
-                    pass
+        if item in exclude_files or item in ["www", "node_modules"]:
+            continue
+        src_path = os.path.join(".", item)
+        dst_path = os.path.join("www", item)
+        if os.path.isfile(src_path):
+            try:
+                shutil.move(src_path, dst_path)
+            except:
+                pass
+        elif os.path.isdir(src_path):
+            try:
+                shutil.move(src_path, dst_path)
+            except:
+                pass
     subprocess.run("npm init -y", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run("npm install @capacitor/core @capacitor/cli @capacitor/android @capacitor/app", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run(f'npx cap init "{app_name}" "{app_id}" --web-dir www', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -353,6 +355,10 @@ def setup_html_project(working_dir, app_name, app_id, version_name, version_code
 def setup_react_project(working_dir, app_name, app_id, version_name, version_code, selected_perm, fullscreen_mode, screen_orientation, build_type, image_path):
     abs_dir = os.path.abspath(working_dir)
     manifest_path = os.path.join(abs_dir, "android", "app", "src", "main", "AndroidManifest.xml")
+    exclude_files = ['icon.png', 'config.json', os.path.basename(__file__)]
+    for item in os.listdir("."):
+        if item in exclude_files or item in ["node_modules"]:
+            continue
     subprocess.run("npm install @capacitor/core @capacitor/cli @capacitor/android @capacitor/app", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run(f'npx cap init "{app_name}" "{app_id}" --web-dir build', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run("npm run build", shell=True)
@@ -425,13 +431,20 @@ def extract_and_setup(zip_path):
     fullscreen_mode = config.get("fullscreen_mode", "0")
     screen_orientation = config.get("screen_orientation", "0")
     build_type = config.get("build_type", "1")
+    shutil.copy2(config_path, temp_dir)
+    if os.path.exists(icon_path):
+        shutil.copy2(icon_path, temp_dir)
     os.chdir(temp_dir)
     if project_type == 1:
-        setup_html_project(temp_dir, app_name, app_id, version_name, version_code, selected_perm, fullscreen_mode, screen_orientation, build_type, icon_path if os.path.exists(icon_path) else None)
+        setup_html_project(temp_dir, app_name, app_id, version_name, version_code, selected_perm, fullscreen_mode, screen_orientation, build_type, os.path.join(temp_dir, "icon.png") if os.path.exists(os.path.join(temp_dir, "icon.png")) else None)
     elif project_type == 2:
-        setup_react_project(temp_dir, app_name, app_id, version_name, version_code, selected_perm, fullscreen_mode, screen_orientation, build_type, icon_path if os.path.exists(icon_path) else None)
+        setup_react_project(temp_dir, app_name, app_id, version_name, version_code, selected_perm, fullscreen_mode, screen_orientation, build_type, os.path.join(temp_dir, "icon.png") if os.path.exists(os.path.join(temp_dir, "icon.png")) else None)
     else:
         print_error("Jenis proyek tidak dikenal!")
+    if os.path.exists(os.path.join(temp_dir, "icon.png")):
+        os.remove(os.path.join(temp_dir, "icon.png"))
+    if os.path.exists(os.path.join(temp_dir, "config.json")):
+        os.remove(os.path.join(temp_dir, "config.json"))
 def tool2_builder():
     current_dir = os.getcwd()
     zip_path = os.path.join(current_dir, "game.capzip")
