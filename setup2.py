@@ -284,7 +284,7 @@ def build_android(working_dir, build_type):
     subprocess.run("chmod +x gradlew", shell=True)
     if build_type == "1":
         print(f"{Colors.YELLOW}Menjalankan ./gradlew assembleDebug...{Colors.END}")
-        process = subprocess.Popen("./gradlew assembleDebug", shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        process = subprocess.Popen("./gradlew assembleDebug --parallel --configuration-cache", shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         for line in process.stdout:
             print(line, end='')
         process.wait()
@@ -303,7 +303,7 @@ def build_android(working_dir, build_type):
             return False
     elif build_type == "2":
         print(f"{Colors.YELLOW}Menjalankan ./gradlew assembleRelease...{Colors.END}")
-        process = subprocess.Popen("./gradlew assembleRelease", shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        process = subprocess.Popen("./gradlew assembleRelease --parallel --configuration-cache", shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         for line in process.stdout:
             print(line, end='')
         process.wait()
