@@ -1,0 +1,49 @@
+name: Build APK from game.capzip
+
+on:
+  push:
+    paths:
+      - 'game.capzip'
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 'v24.9.0'
+          
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+      
+      - name: Install Python dependencies
+        run: pip install Pillow
+      
+      - name: Run builder
+        run: python setup2.py
+      
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug.apk
+          path: /home/runner/.cache/build_temp/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
+      
+      - name: Upload Release APK (if exists)
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release.apk
+          path: /home/runner/.cache/build_temp/android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: ignore
+          retention-days: 30
