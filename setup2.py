@@ -443,7 +443,7 @@ def extract_and_setup(zip_path):
     with open(config_path, 'r') as f:
         config = json.load(f)
     
-    icon_path = os.path.join(temp_dir, "icon.webp")
+    icon_path = os.path.join(temp_dir, "icon.png")
     if not os.path.exists(icon_path):
         icon_path = None
     
