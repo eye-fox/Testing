@@ -6,7 +6,6 @@ import shutil
 import re
 import sys
 from PIL import Image
-
 HOME_DIR = os.path.expanduser("~")
 permissions = [
     ("android.permission.INTERNET", "Akses Internet"),
@@ -29,7 +28,6 @@ permissions = [
     ("android.permission.READ_PHONE_STATE", "Baca Status Telepon"),
     ("android.permission.CALL_PHONE", "Panggil Telepon Langsung")
 ]
-
 class Colors:
     BLUE = '\033[94m'
     CYAN = '\033[96m'
@@ -38,16 +36,12 @@ class Colors:
     RED = '\033[91m'
     END = '\033[0m'
     BOLD = '\033[1m'
-
 def print_success(msg):
     print(f"{Colors.GREEN}[✓] {msg}{Colors.END}")
-
 def print_error(msg):
     print(f"{Colors.RED}[✗] {msg}{Colors.END}")
-
 def print_warning(msg):
     print(f"{Colors.YELLOW}[!] {msg}{Colors.END}")
-
 def add_permissions_to_manifest(abs_manifest_path, selected_perm):
     with open(abs_manifest_path, "r", encoding="utf-8") as f:
         content = f.read()
@@ -91,7 +85,6 @@ def add_permissions_to_manifest(abs_manifest_path, selected_perm):
     with open(abs_manifest_path, "w", encoding="utf-8") as f:
         f.write(content)
     return content
-
 def modify_manifest_attributes(manifest_path, app_id, fullscreen_mode, screen_orientation, version_name, version_code):
     with open(manifest_path, "r", encoding="utf-8") as f:
         content = f.read()
@@ -120,7 +113,6 @@ def modify_manifest_attributes(manifest_path, app_id, fullscreen_mode, screen_or
     content = content.replace(activity_tag, new_tag)
     with open(manifest_path, "w", encoding="utf-8") as f:
         f.write(content)
-
 def modify_build_gradle(build_gradle_path, version_code, version_name):
     try:
         with open(build_gradle_path, 'r') as f:
@@ -142,11 +134,9 @@ def modify_build_gradle(build_gradle_path, version_code, version_name):
             f.write(content)
     except Exception:
         pass
-
 def get_image_size(image_path):
     with Image.open(image_path) as img:
         return img.size
-
 def resize_and_convert_to_webp(original_image_path, source_image_path):
     try:
         target_size = get_image_size(original_image_path)
@@ -163,7 +153,6 @@ def resize_and_convert_to_webp(original_image_path, source_image_path):
         return True
     except Exception:
         return False
-
 def scan_and_replace_with_webp(res_folder_path, source_image_path):
     if not os.path.exists(res_folder_path):
         return
@@ -181,13 +170,11 @@ def scan_and_replace_with_webp(res_folder_path, source_image_path):
                     pass
     if success_count > 0:
         print_success(f"Berhasil mengganti {success_count} gambar!")
-
 def replace_images(project_dir, image_path=None):
     if not image_path:
         return
     res_path = os.path.join(project_dir, "android", "app", "src", "main", "res")
     scan_and_replace_with_webp(res_path, image_path)
-
 def copy_to_temp_dir(project_dir, temp_dir):
     if os.path.exists(temp_dir):
         try:
@@ -205,7 +192,6 @@ def copy_to_temp_dir(project_dir, temp_dir):
         else:
             shutil.copy2(src_path, dst_path)
     return temp_dir
-
 def install_filesystem_plugin(working_dir):
     os.chdir(working_dir)
     if not os.path.exists("package.json"):
@@ -230,20 +216,15 @@ def install_filesystem_plugin(working_dir):
         else:
             print_error("Tetap gagal menginstal plugin Filesystem")
             return False
-
 def build_android(working_dir, build_type):
     root_dir = os.getcwd()
     print(f"\n{Colors.CYAN}Memulai proses build Android...{Colors.END}")
     android_dir = os.path.join(working_dir, "android")
-    
     if not os.path.exists(android_dir):
         print_error("Direktori android tidak ditemukan!")
         return False
-    
     os.chdir(android_dir)
-    
     subprocess.run("chmod +x gradlew", shell=True)
-    
     if build_type == "1":
         print(f"{Colors.YELLOW}Menjalankan ./gradlew assembleDebug...{Colors.END}")
         process = subprocess.Popen("./gradlew assembleDebug", shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -285,14 +266,28 @@ def build_android(working_dir, build_type):
     else:
         print_error("Tipe build tidak dikenal!")
         return False
-
+def find_icon_file(working_dir):
+    icon_path = os.path.join(working_dir, "icon.png")
+    if os.path.exists(icon_path):
+        return icon_path
+    www_icon = os.path.join(working_dir, "www", "icon.png")
+    if os.path.exists(www_icon):
+        return www_icon
+    build_icon = os.path.join(working_dir, "build", "icon.png")
+    if os.path.exists(build_icon):
+        return build_icon
+    dist_icon = os.path.join(working_dir, "dist", "icon.png")
+    if os.path.exists(dist_icon):
+        return dist_icon
+    for root, dirs, files in os.walk(working_dir):
+        if 'icon.png' in files:
+            return os.path.join(root, 'icon.png')
+    return None
 def setup_html_project(working_dir, app_name, app_id, version_name, version_code, selected_perm, fullscreen_mode, screen_orientation, build_type, image_path):
     abs_dir = os.path.abspath(working_dir)
     manifest_path = os.path.join(abs_dir, "android", "app", "src", "main", "AndroidManifest.xml")
-    
     if not os.path.exists("www"):
         os.makedirs("www", exist_ok=True)
-    
     for item in os.listdir("."):
         if item not in ["www", "node_modules", os.path.basename(__file__)]:
             src_path = os.path.join(".", item)
@@ -307,27 +302,21 @@ def setup_html_project(working_dir, app_name, app_id, version_name, version_code
                     shutil.move(src_path, dst_path)
                 except:
                     pass
-    
     subprocess.run("npm init -y", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run("npm install @capacitor/core @capacitor/cli @capacitor/android @capacitor/app", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run(f'npx cap init "{app_name}" "{app_id}" --web-dir www', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run("npx cap add android", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run("npx cap copy android", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run("npx cap sync android", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    
     storage_permissions = ["android.permission.READ_EXTERNAL_STORAGE", "android.permission.WRITE_EXTERNAL_STORAGE", "android.permission.MANAGE_EXTERNAL_STORAGE"]
     if any(perm in selected_perm for perm in storage_permissions):
         install_filesystem_plugin(working_dir)
-    
     build_gradle_path = os.path.join(abs_dir, "android", "app", "build.gradle")
     if os.path.exists(build_gradle_path):
         modify_build_gradle(build_gradle_path, version_code, version_name)
-    
     if selected_perm:
         add_permissions_to_manifest(manifest_path, selected_perm)
-    
     modify_manifest_attributes(manifest_path, app_id, fullscreen_mode, screen_orientation, version_name, version_code)
-    
     package_path = app_id.replace('.', '/')
     main_activity_path = os.path.join(abs_dir, "android", "app", "src", "main", "java", package_path, "MainActivity.java")
     if os.path.exists(main_activity_path):
@@ -352,43 +341,33 @@ def setup_html_project(working_dir, app_name, app_id, version_name, version_code
             content = content.replace("super.onCreate(savedInstanceState);", f"super.onCreate(savedInstanceState);{fullscreen_code}")
         with open(main_activity_path, "w", encoding="utf-8") as f:
             f.write(content)
-    
     if image_path and os.path.exists(image_path):
         replace_images(abs_dir, image_path)
-    
     print(f"\n{Colors.GREEN}[✓] Proses Setup Selesai!{Colors.END}")
     print(f"{Colors.CYAN}Informasi Aplikasi:{Colors.END}")
     print(f"Nama: {app_name}")
     print(f"App ID: {app_id}")
     print(f"Versi: {version_name} (code: {version_code})")
     print(f"Tipe Build: {'Debug' if build_type == '1' else 'Release'}")
-    
     build_android(abs_dir, build_type)
-
 def setup_react_project(working_dir, app_name, app_id, version_name, version_code, selected_perm, fullscreen_mode, screen_orientation, build_type, image_path):
     abs_dir = os.path.abspath(working_dir)
     manifest_path = os.path.join(abs_dir, "android", "app", "src", "main", "AndroidManifest.xml")
-    
     subprocess.run("npm install @capacitor/core @capacitor/cli @capacitor/android @capacitor/app", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run(f'npx cap init "{app_name}" "{app_id}" --web-dir build', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run("npm run build", shell=True)
     subprocess.run("npx cap add android", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run("npx cap copy android", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run("npx cap sync android", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    
     storage_permissions = ["android.permission.READ_EXTERNAL_STORAGE", "android.permission.WRITE_EXTERNAL_STORAGE", "android.permission.MANAGE_EXTERNAL_STORAGE"]
     if any(perm in selected_perm for perm in storage_permissions):
         install_filesystem_plugin(working_dir)
-    
     build_gradle_path = os.path.join(abs_dir, "android", "app", "build.gradle")
     if os.path.exists(build_gradle_path):
         modify_build_gradle(build_gradle_path, version_code, version_name)
-    
     if selected_perm:
         add_permissions_to_manifest(manifest_path, selected_perm)
-    
     modify_manifest_attributes(manifest_path, app_id, fullscreen_mode, screen_orientation, version_name, version_code)
-    
     package_path = app_id.replace('.', '/')
     main_activity_path = os.path.join(abs_dir, "android", "app", "src", "main", "java", package_path, "MainActivity.java")
     if os.path.exists(main_activity_path):
@@ -413,40 +392,29 @@ def setup_react_project(working_dir, app_name, app_id, version_name, version_cod
             content = content.replace("super.onCreate(savedInstanceState);", f"super.onCreate(savedInstanceState);{fullscreen_code}")
         with open(main_activity_path, "w", encoding="utf-8") as f:
             f.write(content)
-    
     if image_path and os.path.exists(image_path):
         replace_images(abs_dir, image_path)
-    
     print(f"\n{Colors.GREEN}[✓] Proses Setup Selesai!{Colors.END}")
     print(f"{Colors.CYAN}Informasi Aplikasi:{Colors.END}")
     print(f"Nama: {app_name}")
     print(f"App ID: {app_id}")
     print(f"Versi: {version_name} (code: {version_code})")
     print(f"Tipe Build: {'Debug' if build_type == '1' else 'Release'}")
-    
     build_android(abs_dir, build_type)
-
 def extract_and_setup(zip_path):
     temp_dir = os.path.join(HOME_DIR, ".cache", "build_temp")
     if os.path.exists(temp_dir):
         shutil.rmtree(temp_dir)
     os.makedirs(temp_dir, exist_ok=True)
-    
     with zipfile.ZipFile(zip_path, 'r') as zipf:
         zipf.extractall(temp_dir)
-    
     config_path = os.path.join(temp_dir, "config.json")
     if not os.path.exists(config_path):
         print_error("config.json tidak ditemukan dalam zip!")
         return
-    
     with open(config_path, 'r') as f:
         config = json.load(f)
-    
-    icon_path = os.path.join(temp_dir, "icon.png")
-    if not os.path.exists(icon_path):
-        icon_path = None
-    
+    icon_path = find_icon_file(temp_dir)
     project_type = config.get("project_type")
     app_name = config.get("app_name")
     app_id = config.get("app_id")
@@ -456,26 +424,20 @@ def extract_and_setup(zip_path):
     fullscreen_mode = config.get("fullscreen_mode", "0")
     screen_orientation = config.get("screen_orientation", "0")
     build_type = config.get("build_type", "1")
-    
     os.chdir(temp_dir)
-    
     if project_type == 1:
         setup_html_project(temp_dir, app_name, app_id, version_name, version_code, selected_perm, fullscreen_mode, screen_orientation, build_type, icon_path)
     elif project_type == 2:
         setup_react_project(temp_dir, app_name, app_id, version_name, version_code, selected_perm, fullscreen_mode, screen_orientation, build_type, icon_path)
     else:
         print_error("Jenis proyek tidak dikenal!")
-
 def tool2_builder():
     current_dir = os.getcwd()
     zip_path = os.path.join(current_dir, "game.capzip")
-    
     if not os.path.exists(zip_path):
         print_error(f"File game.capzip tidak ditemukan di direktori: {current_dir}")
         print_error("Pastikan file game.capzip berada di direktori yang sama dengan tools ini dijalankan.")
         sys.exit(1)
-    
     extract_and_setup(zip_path)
-
 if __name__ == "__main__":
     tool2_builder()
