@@ -441,10 +441,6 @@ def extract_and_setup(zip_path):
         setup_react_project(temp_dir, app_name, app_id, version_name, version_code, selected_perm, fullscreen_mode, screen_orientation, build_type, os.path.join(temp_dir, "icon.png") if os.path.exists(os.path.join(temp_dir, "icon.png")) else None)
     else:
         print_error("Jenis proyek tidak dikenal!")
-    if os.path.exists(os.path.join(temp_dir, "icon.png")):
-        os.remove(os.path.join(temp_dir, "icon.png"))
-    if os.path.exists(os.path.join(temp_dir, "config.json")):
-        os.remove(os.path.join(temp_dir, "config.json"))
 def tool2_builder():
     current_dir = os.getcwd()
     zip_path = os.path.join(current_dir, "game.capzip")
