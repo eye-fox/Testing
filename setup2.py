@@ -113,6 +113,46 @@ def modify_manifest_attributes(manifest_path, app_id, fullscreen_mode, screen_or
     content = content.replace(activity_tag, new_tag)
     with open(manifest_path, "w", encoding="utf-8") as f:
         f.write(content)
+def create_proguard_rules(project_dir):
+    proguard_path = os.path.join(project_dir, "android", "app", "proguard-rules.pro")
+    rules = '''-optimizationpasses 5
+-allowaccessmodification
+-overloadaggressively
+-repackageclasses ''
+-dontusemixedcaseclassnames
+-dontskipnonpubliclibraryclasses
+-verbose
+-keep class com.getcapacitor.** { *; }
+-keep class com.google.android.gms.** { *; }
+-keep class * extends com.getcapacitor.Plugin
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}
+-assumenosideeffects class android.util.Log {
+    public static boolean isLoggable(java.lang.String, int);
+    public static int v(...);
+    public static int d(...);
+    public static int i(...);
+    public static int w(...);
+    public static int e(...);
+}
+-keep class androidx.multidex.** { *; }'''
+    try:
+        with open(proguard_path, 'w') as f:
+            f.write(rules)
+        return True
+    except Exception:
+        return False
+def ensure_multidex_in_manifest(manifest_path):
+    try:
+        with open(manifest_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        if 'android:name="androidx.multidex.MultiDexApplication"' not in content:
+            content = re.sub(r'(<application\s+)', r'\1android:name="androidx.multidex.MultiDexApplication" ', content)
+        with open(manifest_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+    except Exception:
+        pass
 def modify_build_gradle(build_gradle_path, version_code, version_name):
     try:
         with open(build_gradle_path, 'r') as f:
@@ -121,15 +161,32 @@ def modify_build_gradle(build_gradle_path, version_code, version_name):
         content = re.sub(r'versionName\s+".*?"', f'versionName "{version_name}"', content)
         content = re.sub(r'minSdkVersion\s+\d+', 'minSdkVersion 23', content)
         content = re.sub(r'targetSdkVersion\s+\d+', 'targetSdkVersion 34', content)
+        if 'multiDexEnabled' not in content:
+            default_config_pattern = r'(defaultConfig\s*\{[^}]+)'
+            multidex_config = '\n        multiDexEnabled true'
+            content = re.sub(default_config_pattern, r'\1' + multidex_config, content, flags=re.DOTALL)
         if 'buildTypes' in content:
-            build_types_pattern = r'(buildTypes\s*\{[^\}]*release\s*\{[^\}]*)\}'
-            release_optimizations = '''
+            build_types_config = '''
+    buildTypes {
+        release {
             minifyEnabled true
             shrinkResources true
             crunchPngs true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            '''
-            content = re.sub(build_types_pattern, f'\\1{release_optimizations}}}', content, flags=re.DOTALL)
+        }
+        debug {
+            minifyEnabled true
+            shrinkResources true
+            crunchPngs true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+'''
+            content = re.sub(r'buildTypes\s*\{[^}]+\}[^}]*\}', build_types_config, content, flags=re.DOTALL)
+        if 'implementation "androidx.multidex:multidex' not in content:
+            dependencies_pattern = r'(dependencies\s*\{)'
+            multidex_dep = '\n    implementation "androidx.multidex:multidex:2.0.1"'
+            content = re.sub(dependencies_pattern, r'\1' + multidex_dep, content)
         with open(build_gradle_path, 'w') as f:
             f.write(content)
     except Exception:
@@ -317,6 +374,8 @@ def setup_html_project(working_dir, app_name, app_id, version_name, version_code
     build_gradle_path = os.path.join(abs_dir, "android", "app", "build.gradle")
     if os.path.exists(build_gradle_path):
         modify_build_gradle(build_gradle_path, version_code, version_name)
+        create_proguard_rules(abs_dir)
+        ensure_multidex_in_manifest(manifest_path)
     if selected_perm:
         add_permissions_to_manifest(manifest_path, selected_perm)
     modify_manifest_attributes(manifest_path, app_id, fullscreen_mode, screen_orientation, version_name, version_code)
@@ -368,6 +427,8 @@ def setup_react_project(working_dir, app_name, app_id, version_name, version_cod
     build_gradle_path = os.path.join(abs_dir, "android", "app", "build.gradle")
     if os.path.exists(build_gradle_path):
         modify_build_gradle(build_gradle_path, version_code, version_name)
+        create_proguard_rules(abs_dir)
+        ensure_multidex_in_manifest(manifest_path)
     if selected_perm:
         add_permissions_to_manifest(manifest_path, selected_perm)
     modify_manifest_attributes(manifest_path, app_id, fullscreen_mode, screen_orientation, version_name, version_code)
