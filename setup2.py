@@ -6,6 +6,8 @@ import shutil
 import re
 import sys
 from PIL import Image
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
+import threading
 HOME_DIR = os.path.expanduser("~")
 permissions = [
     ("android.permission.INTERNET", "Akses Internet"),
@@ -36,12 +38,16 @@ class Colors:
     RED = '\033[91m'
     END = '\033[0m'
     BOLD = '\033[1m'
+print_lock = threading.Lock()
 def print_success(msg):
-    print(f"{Colors.GREEN}[✓] {msg}{Colors.END}")
+    with print_lock:
+        print(f"{Colors.GREEN}[✓] {msg}{Colors.END}")
 def print_error(msg):
-    print(f"{Colors.RED}[✗] {msg}{Colors.END}")
+    with print_lock:
+        print(f"{Colors.RED}[✗] {msg}{Colors.END}")
 def print_warning(msg):
-    print(f"{Colors.YELLOW}[!] {msg}{Colors.END}")
+    with print_lock:
+        print(f"{Colors.YELLOW}[!] {msg}{Colors.END}")
 def add_permissions_to_manifest(abs_manifest_path, selected_perm):
     with open(abs_manifest_path, "r", encoding="utf-8") as f:
         content = f.read()
@@ -215,16 +221,17 @@ def scan_and_replace_with_webp(res_folder_path, source_image_path):
         return
     if not os.path.exists(source_image_path):
         return
-    success_count = 0
+    image_files = []
     for root, dirs, files in os.walk(res_folder_path):
         for file in files:
             if file.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')):
-                full_path = os.path.join(root, file)
-                try:
-                    if resize_and_convert_to_webp(full_path, source_image_path):
-                        success_count += 1
-                except Exception:
-                    pass
+                image_files.append(os.path.join(root, file))
+    success_count = 0
+    with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
+        futures = {executor.submit(resize_and_convert_to_webp, img_path, source_image_path): img_path for img_path in image_files}
+        for future in as_completed(futures):
+            if future.result():
+                success_count += 1
     if success_count > 0:
         print_success(f"Berhasil mengganti {success_count} gambar!")
 def replace_images(project_dir, image_path=None):
@@ -260,7 +267,6 @@ def install_filesystem_plugin(working_dir):
     result = subprocess.run("npm install @capacitor/filesystem", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if result.returncode == 0:
         print_success("Plugin berhasil diinstal!")
-        subprocess.run("npx cap sync android", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return True
     else:
         print_error("Gagal menginstal plugin Filesystem!")
@@ -268,14 +274,14 @@ def install_filesystem_plugin(working_dir):
         result = subprocess.run("npm install @capacitor/filesystem@latest", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if result.returncode == 0:
             print_success("Plugin berhasil diinstal")
-            subprocess.run("npx cap sync android", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return True
         else:
             print_error("Tetap gagal menginstal plugin Filesystem")
             return False
 def build_android(working_dir, build_type):
     root_dir = os.getcwd()
-    print(f"\n{Colors.CYAN}Memulai proses build Android...{Colors.END}")
+    with print_lock:
+        print(f"\n{Colors.CYAN}Memulai proses build Android...{Colors.END}")
     android_dir = os.path.join(working_dir, "android")
     if not os.path.exists(android_dir):
         print_error("Direktori android tidak ditemukan!")
@@ -283,7 +289,8 @@ def build_android(working_dir, build_type):
     os.chdir(android_dir)
     subprocess.run("chmod +x gradlew", shell=True)
     if build_type == "1":
-        print(f"{Colors.YELLOW}Menjalankan ./gradlew assembleDebug...{Colors.END}")
+        with print_lock:
+            print(f"{Colors.YELLOW}Menjalankan ./gradlew assembleDebug...{Colors.END}")
         process = subprocess.Popen("./gradlew assembleDebug", shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         for line in process.stdout:
             print(line, end='')
@@ -294,7 +301,8 @@ def build_android(working_dir, build_type):
             if os.path.exists(apk_path):
                 print_success(f"Build debug berhasil! APK tersedia di: {apk_path}")
                 shutil.copy2(apk_path, os.path.join(root_dir, "app-debug.apk"))
-                print(f"APK dicopy ke: {os.path.join(root_dir, 'app-debug.apk')}")
+                with print_lock:
+                    print(f"APK dicopy ke: {os.path.join(root_dir, 'app-debug.apk')}")
             else:
                 print_success("Build debug berhasil!")
             return True
@@ -302,7 +310,8 @@ def build_android(working_dir, build_type):
             print_error("Build debug gagal!")
             return False
     elif build_type == "2":
-        print(f"{Colors.YELLOW}Menjalankan ./gradlew assembleRelease...{Colors.END}")
+        with print_lock:
+            print(f"{Colors.YELLOW}Menjalankan ./gradlew assembleRelease...{Colors.END}")
         process = subprocess.Popen("./gradlew assembleRelease", shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         for line in process.stdout:
             print(line, end='')
@@ -313,7 +322,8 @@ def build_android(working_dir, build_type):
             if os.path.exists(apk_path):
                 print_success(f"Build release berhasil! APK tersedia di: {apk_path}")
                 shutil.copy2(apk_path, os.path.join(root_dir, "app-release.apk"))
-                print(f"APK dicopy ke: {os.path.join(root_dir, 'app-release.apk')}")
+                with print_lock:
+                    print(f"APK dicopy ke: {os.path.join(root_dir, 'app-release.apk')}")
             else:
                 print_success("Build release berhasil!")
             return True
@@ -340,130 +350,184 @@ def find_icon_file(working_dir):
         if 'icon.png' in files:
             return os.path.join(root, 'icon.png')
     return None
-def setup_html_project(working_dir, app_name, app_id, version_name, version_code, selected_perm, fullscreen_mode, screen_orientation, build_type, image_path):
+def parallel_setup_html_tasks(working_dir, app_name, app_id, selected_perm, fullscreen_mode, screen_orientation, version_name, version_code, image_path):
     abs_dir = os.path.abspath(working_dir)
     manifest_path = os.path.join(abs_dir, "android", "app", "src", "main", "AndroidManifest.xml")
+    build_gradle_path = os.path.join(abs_dir, "android", "app", "build.gradle")
+    futures = []
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        if os.path.exists(build_gradle_path):
+            futures.append(executor.submit(modify_build_gradle, build_gradle_path, version_code, version_name))
+            futures.append(executor.submit(create_proguard_rules, abs_dir))
+        manifest_result = None
+        if selected_perm:
+            manifest_future = executor.submit(add_permissions_to_manifest, manifest_path, selected_perm)
+            manifest_result = manifest_future.result()
+        for future in as_completed(futures):
+            try:
+                future.result()
+            except Exception as e:
+                print_error(f"Error dalam parallel task: {e}")
+    if manifest_result:
+        ensure_multidex_in_manifest(manifest_path)
+    modify_manifest_attributes(manifest_path, app_id, fullscreen_mode, screen_orientation, version_name, version_code)
+    package_path = app_id.replace('.', '/')
+    main_activity_path = os.path.join(abs_dir, "android", "app", "src", "main", "java", package_path, "MainActivity.java")
+    if os.path.exists(main_activity_path):
+        with open(main_activity_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        if "setRequestedOrientation" not in content and screen_orientation != "0":
+            orientation_code = ""
+            if screen_orientation == "1":
+                orientation_code = "setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);"
+            elif screen_orientation == "2":
+                orientation_code = "setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);"
+            if orientation_code:
+                content = content.replace("super.onCreate(savedInstanceState);", f"super.onCreate(savedInstanceState);\n        {orientation_code}")
+        if fullscreen_mode in ["1", "2"] and "SYSTEM_UI_FLAG_FULLSCREEN" not in content:
+            fullscreen_code = """
+        getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        getWindow().getDecorView().setSystemUiVisibility(
+            View.SYSTEM_UI_FLAG_FULLSCREEN |
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
+            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+        );"""
+            content = content.replace("super.onCreate(savedInstanceState);", f"super.onCreate(savedInstanceState);{fullscreen_code}")
+        with open(main_activity_path, "w", encoding="utf-8") as f:
+            f.write(content)
+    if image_path and os.path.exists(image_path):
+        replace_images(abs_dir, image_path)
+def parallel_setup_react_tasks(working_dir, app_name, app_id, selected_perm, fullscreen_mode, screen_orientation, version_name, version_code, image_path):
+    abs_dir = os.path.abspath(working_dir)
+    manifest_path = os.path.join(abs_dir, "android", "app", "src", "main", "AndroidManifest.xml")
+    build_gradle_path = os.path.join(abs_dir, "android", "app", "build.gradle")
+    futures = []
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        if os.path.exists(build_gradle_path):
+            futures.append(executor.submit(modify_build_gradle, build_gradle_path, version_code, version_name))
+            futures.append(executor.submit(create_proguard_rules, abs_dir))
+        manifest_result = None
+        if selected_perm:
+            manifest_future = executor.submit(add_permissions_to_manifest, manifest_path, selected_perm)
+            manifest_result = manifest_future.result()
+        for future in as_completed(futures):
+            try:
+                future.result()
+            except Exception as e:
+                print_error(f"Error dalam parallel task: {e}")
+    if manifest_result:
+        ensure_multidex_in_manifest(manifest_path)
+    modify_manifest_attributes(manifest_path, app_id, fullscreen_mode, screen_orientation, version_name, version_code)
+    package_path = app_id.replace('.', '/')
+    main_activity_path = os.path.join(abs_dir, "android", "app", "src", "main", "java", package_path, "MainActivity.java")
+    if os.path.exists(main_activity_path):
+        with open(main_activity_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        if "setRequestedOrientation" not in content and screen_orientation != "0":
+            orientation_code = ""
+            if screen_orientation == "1":
+                orientation_code = "setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);"
+            elif screen_orientation == "2":
+                orientation_code = "setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);"
+            if orientation_code:
+                content = content.replace("super.onCreate(savedInstanceState);", f"super.onCreate(savedInstanceState);\n        {orientation_code}")
+        if fullscreen_mode in ["1", "2"] and "SYSTEM_UI_FLAG_FULLSCREEN" not in content:
+            fullscreen_code = """
+        getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        getWindow().getDecorView().setSystemUiVisibility(
+            View.SYSTEM_UI_FLAG_FULLSCREEN |
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
+            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+        );"""
+            content = content.replace("super.onCreate(savedInstanceState);", f"super.onCreate(savedInstanceState);{fullscreen_code}")
+        with open(main_activity_path, "w", encoding="utf-8") as f:
+            f.write(content)
+    if image_path and os.path.exists(image_path):
+        replace_images(abs_dir, image_path)
+def setup_html_project(working_dir, app_name, app_id, version_name, version_code, selected_perm, fullscreen_mode, screen_orientation, build_type, image_path):
+    abs_dir = os.path.abspath(working_dir)
     if not os.path.exists("www"):
         os.makedirs("www", exist_ok=True)
     items_to_move = []
     for item in os.listdir("."):
         if item not in ["www", "node_modules", "icon.png", "config.json", os.path.basename(__file__)]:
             items_to_move.append(item)
-    for item in items_to_move:
-        src_path = os.path.join(".", item)
-        dst_path = os.path.join("www", item)
-        if os.path.isfile(src_path):
-            try:
-                shutil.move(src_path, dst_path)
-            except:
-                pass
-        elif os.path.isdir(src_path):
-            try:
-                shutil.move(src_path, dst_path)
-            except:
-                pass
-    subprocess.run("npm init -y", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    subprocess.run("npm install @capacitor/core @capacitor/cli @capacitor/android @capacitor/app", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    def move_files():
+        for item in items_to_move:
+            src_path = os.path.join(".", item)
+            dst_path = os.path.join("www", item)
+            if os.path.isfile(src_path):
+                try:
+                    shutil.move(src_path, dst_path)
+                except:
+                    pass
+            elif os.path.isdir(src_path):
+                try:
+                    shutil.move(src_path, dst_path)
+                except:
+                    pass
+    def run_npm_install():
+        subprocess.run("npm init -y", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run("npm install @capacitor/core @capacitor/cli @capacitor/android @capacitor/app", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        move_future = executor.submit(move_files)
+        npm_future = executor.submit(run_npm_install)
+        move_future.result()
+        npm_future.result()
     subprocess.run(f'npx cap init "{app_name}" "{app_id}" --web-dir www', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run("npx cap add android", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run("npx cap copy android", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    subprocess.run("npx cap sync android", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     storage_permissions = ["android.permission.READ_EXTERNAL_STORAGE", "android.permission.WRITE_EXTERNAL_STORAGE", "android.permission.MANAGE_EXTERNAL_STORAGE"]
+    plugin_installed = False
     if any(perm in selected_perm for perm in storage_permissions):
-        install_filesystem_plugin(working_dir)
-    build_gradle_path = os.path.join(abs_dir, "android", "app", "build.gradle")
-    if os.path.exists(build_gradle_path):
-        modify_build_gradle(build_gradle_path, version_code, version_name)
-        create_proguard_rules(abs_dir)
-        ensure_multidex_in_manifest(manifest_path)
-    if selected_perm:
-        add_permissions_to_manifest(manifest_path, selected_perm)
-    modify_manifest_attributes(manifest_path, app_id, fullscreen_mode, screen_orientation, version_name, version_code)
-    package_path = app_id.replace('.', '/')
-    main_activity_path = os.path.join(abs_dir, "android", "app", "src", "main", "java", package_path, "MainActivity.java")
-    if os.path.exists(main_activity_path):
-        with open(main_activity_path, "r", encoding="utf-8") as f:
-            content = f.read()
-        if "setRequestedOrientation" not in content and screen_orientation != "0":
-            orientation_code = ""
-            if screen_orientation == "1":
-                orientation_code = "setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);"
-            elif screen_orientation == "2":
-                orientation_code = "setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);"
-            if orientation_code:
-                content = content.replace("super.onCreate(savedInstanceState);", f"super.onCreate(savedInstanceState);\n        {orientation_code}")
-        if fullscreen_mode in ["1", "2"] and "SYSTEM_UI_FLAG_FULLSCREEN" not in content:
-            fullscreen_code = """
-        getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
-        getWindow().getDecorView().setSystemUiVisibility(
-            View.SYSTEM_UI_FLAG_FULLSCREEN |
-            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
-            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-        );"""
-            content = content.replace("super.onCreate(savedInstanceState);", f"super.onCreate(savedInstanceState);{fullscreen_code}")
-        with open(main_activity_path, "w", encoding="utf-8") as f:
-            f.write(content)
-    if image_path and os.path.exists(image_path):
-        replace_images(abs_dir, image_path)
-    print(f"\n{Colors.GREEN}[✓] Proses Setup Selesai!{Colors.END}")
-    print(f"{Colors.CYAN}Informasi Aplikasi:{Colors.END}")
-    print(f"Nama: {app_name}")
-    print(f"App ID: {app_id}")
-    print(f"Versi: {version_name} (code: {version_code})")
-    print(f"Tipe Build: {'Debug' if build_type == '1' else 'Release'}")
+        plugin_installed = install_filesystem_plugin(working_dir)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        sync_future = executor.submit(subprocess.run, "npx cap sync android", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if plugin_installed:
+            sync_future.result()
+        else:
+            sync_future.result()
+    parallel_setup_html_tasks(working_dir, app_name, app_id, selected_perm, fullscreen_mode, screen_orientation, version_name, version_code, image_path)
+    with print_lock:
+        print(f"\n{Colors.GREEN}[✓] Proses Setup Selesai!{Colors.END}")
+        print(f"{Colors.CYAN}Informasi Aplikasi:{Colors.END}")
+        print(f"Nama: {app_name}")
+        print(f"App ID: {app_id}")
+        print(f"Versi: {version_name} (code: {version_code})")
+        print(f"Tipe Build: {'Debug' if build_type == '1' else 'Release'}")
     build_android(abs_dir, build_type)
 def setup_react_project(working_dir, app_name, app_id, version_name, version_code, selected_perm, fullscreen_mode, screen_orientation, build_type, image_path):
     abs_dir = os.path.abspath(working_dir)
-    manifest_path = os.path.join(abs_dir, "android", "app", "src", "main", "AndroidManifest.xml")
-    subprocess.run("npm install @capacitor/core @capacitor/cli @capacitor/android @capacitor/app", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    def run_npm_install():
+        subprocess.run("npm install @capacitor/core @capacitor/cli @capacitor/android @capacitor/app", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    def run_npm_build():
+        subprocess.run("npm run build", shell=True)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        npm_future = executor.submit(run_npm_install)
+        build_future = executor.submit(run_npm_build)
+        npm_future.result()
+        build_future.result()
     subprocess.run(f'npx cap init "{app_name}" "{app_id}" --web-dir build', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    subprocess.run("npm run build", shell=True)
     subprocess.run("npx cap add android", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run("npx cap copy android", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    subprocess.run("npx cap sync android", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     storage_permissions = ["android.permission.READ_EXTERNAL_STORAGE", "android.permission.WRITE_EXTERNAL_STORAGE", "android.permission.MANAGE_EXTERNAL_STORAGE"]
+    plugin_installed = False
     if any(perm in selected_perm for perm in storage_permissions):
-        install_filesystem_plugin(working_dir)
-    build_gradle_path = os.path.join(abs_dir, "android", "app", "build.gradle")
-    if os.path.exists(build_gradle_path):
-        modify_build_gradle(build_gradle_path, version_code, version_name)
-        create_proguard_rules(abs_dir)
-        ensure_multidex_in_manifest(manifest_path)
-    if selected_perm:
-        add_permissions_to_manifest(manifest_path, selected_perm)
-    modify_manifest_attributes(manifest_path, app_id, fullscreen_mode, screen_orientation, version_name, version_code)
-    package_path = app_id.replace('.', '/')
-    main_activity_path = os.path.join(abs_dir, "android", "app", "src", "main", "java", package_path, "MainActivity.java")
-    if os.path.exists(main_activity_path):
-        with open(main_activity_path, "r", encoding="utf-8") as f:
-            content = f.read()
-        if "setRequestedOrientation" not in content and screen_orientation != "0":
-            orientation_code = ""
-            if screen_orientation == "1":
-                orientation_code = "setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);"
-            elif screen_orientation == "2":
-                orientation_code = "setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);"
-            if orientation_code:
-                content = content.replace("super.onCreate(savedInstanceState);", f"super.onCreate(savedInstanceState);\n        {orientation_code}")
-        if fullscreen_mode in ["1", "2"] and "SYSTEM_UI_FLAG_FULLSCREEN" not in content:
-            fullscreen_code = """
-        getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
-        getWindow().getDecorView().setSystemUiVisibility(
-            View.SYSTEM_UI_FLAG_FULLSCREEN |
-            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
-            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-        );"""
-            content = content.replace("super.onCreate(savedInstanceState);", f"super.onCreate(savedInstanceState);{fullscreen_code}")
-        with open(main_activity_path, "w", encoding="utf-8") as f:
-            f.write(content)
-    if image_path and os.path.exists(image_path):
-        replace_images(abs_dir, image_path)
-    print(f"\n{Colors.GREEN}[✓] Proses Setup Selesai!{Colors.END}")
-    print(f"{Colors.CYAN}Informasi Aplikasi:{Colors.END}")
-    print(f"Nama: {app_name}")
-    print(f"App ID: {app_id}")
-    print(f"Versi: {version_name} (code: {version_code})")
-    print(f"Tipe Build: {'Debug' if build_type == '1' else 'Release'}")
+        plugin_installed = install_filesystem_plugin(working_dir)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        sync_future = executor.submit(subprocess.run, "npx cap sync android", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if plugin_installed:
+            sync_future.result()
+        else:
+            sync_future.result()
+    parallel_setup_react_tasks(working_dir, app_name, app_id, selected_perm, fullscreen_mode, screen_orientation, version_name, version_code, image_path)
+    with print_lock:
+        print(f"\n{Colors.GREEN}[✓] Proses Setup Selesai!{Colors.END}")
+        print(f"{Colors.CYAN}Informasi Aplikasi:{Colors.END}")
+        print(f"Nama: {app_name}")
+        print(f"App ID: {app_id}")
+        print(f"Versi: {version_name} (code: {version_code})")
+        print(f"Tipe Build: {'Debug' if build_type == '1' else 'Release'}")
     build_android(abs_dir, build_type)
 def extract_and_setup(zip_path):
     temp_dir = os.path.join(HOME_DIR, ".cache", "build_temp")
