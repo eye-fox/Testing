@@ -408,13 +408,14 @@ def extract_and_setup(zip_path):
     os.makedirs(temp_dir, exist_ok=True)
     with zipfile.ZipFile(zip_path, 'r') as zipf:
         zipf.extractall(temp_dir)
-    config_path = os.path.join(temp_dir, "config.json")
+    current_dir = os.getcwd()
+    config_path = os.path.join(current_dir, "config.json")
+    icon_path = os.path.join(current_dir, "icon.png")
     if not os.path.exists(config_path):
-        print_error("config.json tidak ditemukan dalam zip!")
+        print_error("config.json tidak ditemukan di root repository!")
         return
     with open(config_path, 'r') as f:
         config = json.load(f)
-    icon_path = find_icon_file(temp_dir)
     project_type = config.get("project_type")
     app_name = config.get("app_name")
     app_id = config.get("app_id")
@@ -426,9 +427,9 @@ def extract_and_setup(zip_path):
     build_type = config.get("build_type", "1")
     os.chdir(temp_dir)
     if project_type == 1:
-        setup_html_project(temp_dir, app_name, app_id, version_name, version_code, selected_perm, fullscreen_mode, screen_orientation, build_type, icon_path)
+        setup_html_project(temp_dir, app_name, app_id, version_name, version_code, selected_perm, fullscreen_mode, screen_orientation, build_type, icon_path if os.path.exists(icon_path) else None)
     elif project_type == 2:
-        setup_react_project(temp_dir, app_name, app_id, version_name, version_code, selected_perm, fullscreen_mode, screen_orientation, build_type, icon_path)
+        setup_react_project(temp_dir, app_name, app_id, version_name, version_code, selected_perm, fullscreen_mode, screen_orientation, build_type, icon_path if os.path.exists(icon_path) else None)
     else:
         print_error("Jenis proyek tidak dikenal!")
 def tool2_builder():
