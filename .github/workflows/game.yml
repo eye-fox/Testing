@@ -27,7 +27,7 @@ jobs:
         uses: android-actions/setup-android@v3
       
       - name: Install Python dependencies
-        run: pip install Pillow aiofiles
+        run: pip install Pillow aiofiles requests packaging
       
       - name: Run builder
         run: python setup2.py
