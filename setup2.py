@@ -146,37 +146,6 @@ def modify_build_gradle(build_gradle_path, version_code, version_name):
         content = re.sub(dependencies_pattern, r'\1' + multidex_dep, content)
     with open(build_gradle_path, 'w') as f:
         f.write(content)
-def get_image_size(image_path):
-    with Image.open(image_path) as img:
-        return img.size
-def resize_and_convert_to_webp(original_image_path, source_image_path):
-    target_size = get_image_size(original_image_path)
-    with Image.open(source_image_path) as src_img:
-        src_img = src_img.convert("RGBA")
-        resized_img = src_img.resize(target_size, Image.LANCZOS)
-        webp_path = os.path.splitext(original_image_path)[0] + ".webp"
-        resized_img.save(webp_path, "WEBP", quality=80, method=6)
-    if not original_image_path.lower().endswith(".webp"):
-        try:
-            os.remove(original_image_path)
-        except:
-            pass
-    return True
-def scan_and_replace_with_webp(res_folder_path, source_image_path):
-    if not os.path.exists(res_folder_path) or not os.path.exists(source_image_path):
-        return
-    for root, dirs, files in os.walk(res_folder_path):
-        for file in files:
-            if file.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')):
-                try:
-                    resize_and_convert_to_webp(os.path.join(root, file), source_image_path)
-                except:
-                    pass
-def replace_images(project_dir, image_path):
-    if not image_path:
-        return
-    res_path = os.path.join(project_dir, "android", "app", "src", "main", "res")
-    scan_and_replace_with_webp(res_path, image_path)
 def install_filesystem_plugin(working_dir):
     os.chdir(working_dir)
     if not os.path.exists("package.json"):
@@ -203,18 +172,6 @@ def build_android(working_dir, build_type):
             shutil.copy2(apk_path, os.path.join(root_dir, apk_name))
         return True
     return False
-def find_icon_file(working_dir):
-    icon_path = os.path.join(working_dir, "icon.png")
-    if os.path.exists(icon_path):
-        return icon_path
-    for subdir in ["www", "build", "dist"]:
-        path = os.path.join(working_dir, subdir, "icon.png")
-        if os.path.exists(path):
-            return path
-    for root, dirs, files in os.walk(working_dir):
-        if 'icon.png' in files:
-            return os.path.join(root, 'icon.png')
-    return None
 def setup_project(working_dir, app_name, app_id, version_name, version_code, selected_perm, fullscreen_mode, screen_orientation, build_type, image_path, project_type):
     abs_dir = os.path.abspath(working_dir)
     manifest_path = os.path.join(abs_dir, "android", "app", "src", "main", "AndroidManifest.xml")
@@ -233,6 +190,10 @@ def setup_project(working_dir, app_name, app_id, version_name, version_code, sel
         subprocess.run("npm run build", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run("npm install @capacitor/core @capacitor/cli @capacitor/android @capacitor/app", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run(f'npx cap init "{app_name}" "{app_id}" --web-dir {web_dir}', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if image_path and os.path.exists(image_path):
+        shutil.copy2(image_path, os.path.join(working_dir, "icon.png"))
+        subprocess.run("npm install -D @capacitor/assets", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run("npx capacitor-assets generate --icon icon.png --android", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run("npx cap add android", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run("npx cap copy android", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run("npx cap sync android", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -271,8 +232,6 @@ def setup_project(working_dir, app_name, app_id, version_name, version_code, sel
             content = content.replace("super.onCreate(savedInstanceState);", f"super.onCreate(savedInstanceState);{fullscreen_code}")
         with open(main_activity_path, "w", encoding="utf-8") as f:
             f.write(content)
-    if image_path and os.path.exists(image_path):
-        replace_images(abs_dir, image_path)
     build_android(abs_dir, build_type)
 def extract_and_setup(zip_path):
     temp_dir = os.path.join(HOME_DIR, ".cache", "build_temp")
