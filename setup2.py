@@ -8,6 +8,10 @@ import sys
 from PIL import Image
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 import threading
+import asyncio
+import aiofiles
+import aiofiles.os
+from pathlib import Path
 HOME_DIR = os.path.expanduser("~")
 permissions = [
     ("android.permission.INTERNET", "Akses Internet"),
@@ -39,15 +43,57 @@ class Colors:
     END = '\033[0m'
     BOLD = '\033[1m'
 print_lock = threading.Lock()
+async def run_async(cmd, cwd=None, silent=True):
+    """Jalankan subprocess secara asynchronous"""
+    if silent:
+        process = await asyncio.create_subprocess_shell(
+            cmd, cwd=cwd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+    else:
+        process = await asyncio.create_subprocess_shell(
+            cmd, cwd=cwd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+    await process.wait()
+    return process.returncode
+
+async def run_async_with_output(cmd, cwd=None):
+    """Jalankan subprocess dengan output real-time"""
+    process = await asyncio.create_subprocess_shell(
+        cmd, cwd=cwd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT
+    )
+    while True:
+        line = await process.stdout.readline()
+        if not line:
+            break
+        print(line.decode().strip())
+    await process.wait()
+    return process.returncode
+
+def run_sync(cmd, cwd=None, silent=True):
+    """Wrapper untuk sync call"""
+    if silent:
+        return subprocess.run(cmd, shell=True, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode
+    else:
+        return subprocess.run(cmd, shell=True, cwd=cwd).returncode
+
 def print_success(msg):
     with print_lock:
         print(f"{Colors.GREEN}[✓] {msg}{Colors.END}")
+
 def print_error(msg):
     with print_lock:
         print(f"{Colors.RED}[✗] {msg}{Colors.END}")
+
 def print_warning(msg):
     with print_lock:
         print(f"{Colors.YELLOW}[!] {msg}{Colors.END}")
+
 def add_permissions_to_manifest(abs_manifest_path, selected_perm):
     with open(abs_manifest_path, "r", encoding="utf-8") as f:
         content = f.read()
@@ -91,6 +137,7 @@ def add_permissions_to_manifest(abs_manifest_path, selected_perm):
     with open(abs_manifest_path, "w", encoding="utf-8") as f:
         f.write(content)
     return content
+
 def modify_manifest_attributes(manifest_path, app_id, fullscreen_mode, screen_orientation, version_name, version_code):
     with open(manifest_path, "r", encoding="utf-8") as f:
         content = f.read()
@@ -119,6 +166,7 @@ def modify_manifest_attributes(manifest_path, app_id, fullscreen_mode, screen_or
     content = content.replace(activity_tag, new_tag)
     with open(manifest_path, "w", encoding="utf-8") as f:
         f.write(content)
+
 def create_proguard_rules(project_dir):
     proguard_path = os.path.join(project_dir, "android", "app", "proguard-rules.pro")
     rules = '''-optimizationpasses 5
@@ -149,6 +197,7 @@ def create_proguard_rules(project_dir):
         return True
     except Exception:
         return False
+
 def ensure_multidex_in_manifest(manifest_path):
     try:
         with open(manifest_path, 'r', encoding='utf-8') as f:
@@ -159,6 +208,7 @@ def ensure_multidex_in_manifest(manifest_path):
             f.write(content)
     except Exception:
         pass
+
 def modify_build_gradle(build_gradle_path, version_code, version_name):
     try:
         with open(build_gradle_path, 'r') as f:
@@ -197,9 +247,11 @@ def modify_build_gradle(build_gradle_path, version_code, version_name):
             f.write(content)
     except Exception:
         pass
+
 def get_image_size(image_path):
     with Image.open(image_path) as img:
         return img.size
+
 def resize_and_convert_to_webp(original_image_path, source_image_path):
     try:
         target_size = get_image_size(original_image_path)
@@ -216,6 +268,7 @@ def resize_and_convert_to_webp(original_image_path, source_image_path):
         return True
     except Exception:
         return False
+
 def scan_and_replace_with_webp(res_folder_path, source_image_path):
     if not os.path.exists(res_folder_path):
         return
@@ -234,11 +287,13 @@ def scan_and_replace_with_webp(res_folder_path, source_image_path):
                 success_count += 1
     if success_count > 0:
         print_success(f"Berhasil mengganti {success_count} gambar!")
+
 def replace_images(project_dir, image_path=None):
     if not image_path:
         return
     res_path = os.path.join(project_dir, "android", "app", "src", "main", "res")
     scan_and_replace_with_webp(res_path, image_path)
+
 def copy_to_temp_dir(project_dir, temp_dir):
     if os.path.exists(temp_dir):
         try:
@@ -256,29 +311,36 @@ def copy_to_temp_dir(project_dir, temp_dir):
         else:
             shutil.copy2(src_path, dst_path)
     return temp_dir
-def install_filesystem_plugin(working_dir):
+
+async def install_filesystem_plugin_async(working_dir):
     os.chdir(working_dir)
     if not os.path.exists("package.json"):
         print_error("package.json tidak ditemukan!")
         return False
-    result = subprocess.run("npm list @capacitor/core", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    if result.returncode != 0:
-        subprocess.run("npm install @capacitor/core", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    result = subprocess.run("npm install @capacitor/filesystem", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    if result.returncode == 0:
-        print_success("Plugin berhasil diinstal!")
-        return True
-    else:
-        print_error("Gagal menginstal plugin Filesystem!")
-        print_warning("Mencoba alternatif: menginstal versi stabil...")
-        result = subprocess.run("npm install @capacitor/filesystem@latest", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if result.returncode == 0:
-            print_success("Plugin berhasil diinstal")
-            return True
-        else:
-            print_error("Tetap gagal menginstal plugin Filesystem")
-            return False
-def build_android(working_dir, build_type):
+    await run_async("npm install @capacitor/filesystem@latest", silent=True)
+    print_success("Plugin filesystem berhasil diinstal!")
+    return True
+
+async def parallel_npm_install_async(packages, cwd=None):
+    """Install multiple NPM packages secara paralel"""
+    tasks = []
+    for pkg in packages:
+        tasks.append(run_async(f"npm install {pkg}", cwd=cwd, silent=True))
+    results = await asyncio.gather(*tasks)
+    return all(r == 0 for r in results)
+
+def enable_gradle_parallel(android_dir):
+    """Aktifkan parallel build di Gradle"""
+    gradle_props = os.path.join(android_dir, "gradle.properties")
+    with open(gradle_props, 'a') as f:
+        f.write("\n# Parallel build config\n")
+        f.write("org.gradle.parallel=true\n")
+        f.write("org.gradle.caching=true\n")
+        f.write("org.gradle.daemon=true\n")
+        f.write("org.gradle.jvmargs=-Xmx4096m -XX:MaxPermSize=512m -XX:+HeapDumpOnOutOfMemoryError\n")
+
+async def build_android_async(working_dir, build_type):
+    """Async build dengan Gradle parallel"""
     root_dir = os.getcwd()
     with print_lock:
         print(f"\n{Colors.CYAN}Memulai proses build Android...{Colors.END}")
@@ -286,16 +348,13 @@ def build_android(working_dir, build_type):
     if not os.path.exists(android_dir):
         print_error("Direktori android tidak ditemukan!")
         return False
+    enable_gradle_parallel(android_dir)
     os.chdir(android_dir)
-    subprocess.run("chmod +x gradlew", shell=True)
+    await run_async("chmod +x gradlew", silent=True)
     if build_type == "1":
         with print_lock:
-            print(f"{Colors.YELLOW}Menjalankan ./gradlew assembleDebug...{Colors.END}")
-        process = subprocess.Popen("./gradlew assembleDebug", shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        for line in process.stdout:
-            print(line, end='')
-        process.wait()
-        result = process.returncode
+            print(f"{Colors.YELLOW}Menjalankan ./gradlew assembleDebug (parallel mode)...{Colors.END}")
+        result = await run_async_with_output("./gradlew assembleDebug", cwd=android_dir)
         if result == 0:
             apk_path = os.path.join(android_dir, "app", "build", "outputs", "apk", "debug", "app-debug.apk")
             if os.path.exists(apk_path):
@@ -311,12 +370,8 @@ def build_android(working_dir, build_type):
             return False
     elif build_type == "2":
         with print_lock:
-            print(f"{Colors.YELLOW}Menjalankan ./gradlew assembleRelease...{Colors.END}")
-        process = subprocess.Popen("./gradlew assembleRelease", shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        for line in process.stdout:
-            print(line, end='')
-        process.wait()
-        result = process.returncode
+            print(f"{Colors.YELLOW}Menjalankan ./gradlew assembleRelease (parallel mode)...{Colors.END}")
+        result = await run_async_with_output("./gradlew assembleRelease", cwd=android_dir)
         if result == 0:
             apk_path = os.path.join(android_dir, "app", "build", "outputs", "apk", "release", "app-release.apk")
             if os.path.exists(apk_path):
@@ -333,6 +388,36 @@ def build_android(working_dir, build_type):
     else:
         print_error("Tipe build tidak dikenal!")
         return False
+
+async def build_both_async(working_dir):
+    """Build debug dan release secara paralel"""
+    root_dir = os.getcwd()
+    with print_lock:
+        print(f"\n{Colors.CYAN}Memulai proses build Android (Debug + Release parallel)...{Colors.END}")
+    android_dir = os.path.join(working_dir, "android")
+    if not os.path.exists(android_dir):
+        print_error("Direktori android tidak ditemukan!")
+        return False
+    enable_gradle_parallel(android_dir)
+    os.chdir(android_dir)
+    await run_async("chmod +x gradlew", silent=True)
+    with print_lock:
+        print(f"{Colors.YELLOW}Menjalankan ./gradlew assembleDebug assembleRelease secara paralel...{Colors.END}")
+    result = await run_async_with_output("./gradlew assembleDebug assembleRelease --parallel", cwd=android_dir)
+    if result == 0:
+        debug_apk = os.path.join(android_dir, "app", "build", "outputs", "apk", "debug", "app-debug.apk")
+        release_apk = os.path.join(android_dir, "app", "build", "outputs", "apk", "release", "app-release.apk")
+        if os.path.exists(debug_apk):
+            shutil.copy2(debug_apk, os.path.join(root_dir, "app-debug.apk"))
+            print_success("APK Debug dicopy")
+        if os.path.exists(release_apk):
+            shutil.copy2(release_apk, os.path.join(root_dir, "app-release.apk"))
+            print_success("APK Release dicopy")
+        return True
+    else:
+        print_error("Build gagal!")
+        return False
+
 def find_icon_file(working_dir):
     icon_path = os.path.join(working_dir, "icon.png")
     if os.path.exists(icon_path):
@@ -350,6 +435,7 @@ def find_icon_file(working_dir):
         if 'icon.png' in files:
             return os.path.join(root, 'icon.png')
     return None
+
 def parallel_setup_html_tasks(working_dir, app_name, app_id, selected_perm, fullscreen_mode, screen_orientation, version_name, version_code, image_path):
     abs_dir = os.path.abspath(working_dir)
     manifest_path = os.path.join(abs_dir, "android", "app", "src", "main", "AndroidManifest.xml")
@@ -397,6 +483,7 @@ def parallel_setup_html_tasks(working_dir, app_name, app_id, selected_perm, full
             f.write(content)
     if image_path and os.path.exists(image_path):
         replace_images(abs_dir, image_path)
+
 def parallel_setup_react_tasks(working_dir, app_name, app_id, selected_perm, fullscreen_mode, screen_orientation, version_name, version_code, image_path):
     abs_dir = os.path.abspath(working_dir)
     manifest_path = os.path.join(abs_dir, "android", "app", "src", "main", "AndroidManifest.xml")
@@ -444,7 +531,8 @@ def parallel_setup_react_tasks(working_dir, app_name, app_id, selected_perm, ful
             f.write(content)
     if image_path and os.path.exists(image_path):
         replace_images(abs_dir, image_path)
-def setup_html_project(working_dir, app_name, app_id, version_name, version_code, selected_perm, fullscreen_mode, screen_orientation, build_type, image_path):
+
+async def setup_html_project_async(working_dir, app_name, app_id, version_name, version_code, selected_perm, fullscreen_mode, screen_orientation, build_type, image_path):
     abs_dir = os.path.abspath(working_dir)
     if not os.path.exists("www"):
         os.makedirs("www", exist_ok=True)
@@ -466,69 +554,79 @@ def setup_html_project(working_dir, app_name, app_id, version_name, version_code
                     shutil.move(src_path, dst_path)
                 except:
                     pass
-    def run_npm_install():
-        subprocess.run("npm init -y", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run("npm install @capacitor/core @capacitor/cli @capacitor/android @capacitor/app", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    async def run_npm_init_async():
+        await run_async("npm init -y", silent=True)
+    async def run_npm_install_parallel():
+        packages = ["@capacitor/core", "@capacitor/cli", "@capacitor/android", "@capacitor/app"]
+        await parallel_npm_install_async(packages)
     with ThreadPoolExecutor(max_workers=2) as executor:
         move_future = executor.submit(move_files)
-        npm_future = executor.submit(run_npm_install)
         move_future.result()
-        npm_future.result()
-    subprocess.run(f'npx cap init "{app_name}" "{app_id}" --web-dir www', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    subprocess.run("npx cap add android", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    subprocess.run("npx cap copy android", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    await asyncio.gather(
+        run_npm_init_async(),
+        run_npm_install_parallel()
+    )
+    await run_async(f'npx cap init "{app_name}" "{app_id}" --web-dir www', silent=True)
+    await run_async("npx cap add android", silent=True)
+    await run_async("npx cap copy android", silent=True)
     storage_permissions = ["android.permission.READ_EXTERNAL_STORAGE", "android.permission.WRITE_EXTERNAL_STORAGE", "android.permission.MANAGE_EXTERNAL_STORAGE"]
-    plugin_installed = False
+    plugin_task = None
     if any(perm in selected_perm for perm in storage_permissions):
-        plugin_installed = install_filesystem_plugin(working_dir)
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        sync_future = executor.submit(subprocess.run, "npx cap sync android", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if plugin_installed:
-            sync_future.result()
-        else:
-            sync_future.result()
-    parallel_setup_html_tasks(working_dir, app_name, app_id, selected_perm, fullscreen_mode, screen_orientation, version_name, version_code, image_path)
+        plugin_task = asyncio.create_task(install_filesystem_plugin_async(working_dir))
+    sync_task = asyncio.create_task(run_async("npx cap sync android", silent=True))
+    if plugin_task:
+        await plugin_task
+    await sync_task
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, parallel_setup_html_tasks, working_dir, app_name, app_id, selected_perm, fullscreen_mode, screen_orientation, version_name, version_code, image_path)
     with print_lock:
         print(f"\n{Colors.GREEN}[✓] Proses Setup Selesai!{Colors.END}")
         print(f"{Colors.CYAN}Informasi Aplikasi:{Colors.END}")
         print(f"Nama: {app_name}")
         print(f"App ID: {app_id}")
         print(f"Versi: {version_name} (code: {version_code})")
-        print(f"Tipe Build: {'Debug' if build_type == '1' else 'Release'}")
-    build_android(abs_dir, build_type)
-def setup_react_project(working_dir, app_name, app_id, version_name, version_code, selected_perm, fullscreen_mode, screen_orientation, build_type, image_path):
+        print(f"Tipe Build: {'Debug' if build_type == '1' else 'Release' if build_type == '2' else 'Debug+Release'}")
+    if build_type == "3":
+        await build_both_async(abs_dir)
+    else:
+        await build_android_async(abs_dir, build_type)
+
+async def setup_react_project_async(working_dir, app_name, app_id, version_name, version_code, selected_perm, fullscreen_mode, screen_orientation, build_type, image_path):
     abs_dir = os.path.abspath(working_dir)
-    def run_npm_install():
-        subprocess.run("npm install @capacitor/core @capacitor/cli @capacitor/android @capacitor/app", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    def run_npm_build():
-        subprocess.run("npm run build", shell=True)
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        npm_future = executor.submit(run_npm_install)
-        build_future = executor.submit(run_npm_build)
-        npm_future.result()
-        build_future.result()
-    subprocess.run(f'npx cap init "{app_name}" "{app_id}" --web-dir build', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    subprocess.run("npx cap add android", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    subprocess.run("npx cap copy android", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    async def run_npm_install_parallel():
+        packages = ["@capacitor/core", "@capacitor/cli", "@capacitor/android", "@capacitor/app"]
+        await parallel_npm_install_async(packages)
+    async def run_npm_build_async():
+        await run_async("npm run build", silent=False)
+    await asyncio.gather(
+        run_npm_install_parallel(),
+        run_npm_build_async()
+    )
+    await run_async(f'npx cap init "{app_name}" "{app_id}" --web-dir build', silent=True)
+    await run_async("npx cap add android", silent=True)
+    await run_async("npx cap copy android", silent=True)
     storage_permissions = ["android.permission.READ_EXTERNAL_STORAGE", "android.permission.WRITE_EXTERNAL_STORAGE", "android.permission.MANAGE_EXTERNAL_STORAGE"]
-    plugin_installed = False
+    plugin_task = None
     if any(perm in selected_perm for perm in storage_permissions):
-        plugin_installed = install_filesystem_plugin(working_dir)
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        sync_future = executor.submit(subprocess.run, "npx cap sync android", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if plugin_installed:
-            sync_future.result()
-        else:
-            sync_future.result()
-    parallel_setup_react_tasks(working_dir, app_name, app_id, selected_perm, fullscreen_mode, screen_orientation, version_name, version_code, image_path)
+        plugin_task = asyncio.create_task(install_filesystem_plugin_async(working_dir))
+    sync_task = asyncio.create_task(run_async("npx cap sync android", silent=True))
+    if plugin_task:
+        await plugin_task
+    await sync_task
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, parallel_setup_react_tasks, working_dir, app_name, app_id, selected_perm, fullscreen_mode, screen_orientation, version_name, version_code, image_path)
     with print_lock:
         print(f"\n{Colors.GREEN}[✓] Proses Setup Selesai!{Colors.END}")
         print(f"{Colors.CYAN}Informasi Aplikasi:{Colors.END}")
         print(f"Nama: {app_name}")
         print(f"App ID: {app_id}")
         print(f"Versi: {version_name} (code: {version_code})")
-        print(f"Tipe Build: {'Debug' if build_type == '1' else 'Release'}")
-    build_android(abs_dir, build_type)
+        print(f"Tipe Build: {'Debug' if build_type == '1' else 'Release' if build_type == '2' else 'Debug+Release'}")
+    if build_type == "3":
+        await build_both_async(abs_dir)
+    else:
+        await build_android_async(abs_dir, build_type)
+
 def extract_and_setup(zip_path):
     temp_dir = os.path.join(HOME_DIR, ".cache", "build_temp")
     if os.path.exists(temp_dir):
@@ -557,11 +655,12 @@ def extract_and_setup(zip_path):
         shutil.copy2(icon_path, temp_dir)
     os.chdir(temp_dir)
     if project_type == 1:
-        setup_html_project(temp_dir, app_name, app_id, version_name, version_code, selected_perm, fullscreen_mode, screen_orientation, build_type, icon_path if os.path.exists(icon_path) else None)
+        asyncio.run(setup_html_project_async(temp_dir, app_name, app_id, version_name, version_code, selected_perm, fullscreen_mode, screen_orientation, build_type, icon_path if os.path.exists(icon_path) else None))
     elif project_type == 2:
-        setup_react_project(temp_dir, app_name, app_id, version_name, version_code, selected_perm, fullscreen_mode, screen_orientation, build_type, icon_path if os.path.exists(icon_path) else None)
+        asyncio.run(setup_react_project_async(temp_dir, app_name, app_id, version_name, version_code, selected_perm, fullscreen_mode, screen_orientation, build_type, icon_path if os.path.exists(icon_path) else None))
     else:
         print_error("Jenis proyek tidak dikenal!")
+
 def tool2_builder():
     current_dir = os.getcwd()
     zip_path = os.path.join(current_dir, "game.capzip")
@@ -570,5 +669,6 @@ def tool2_builder():
         print_error("Pastikan file game.capzip berada di direktori yang sama dengan tools ini dijalankan.")
         sys.exit(1)
     extract_and_setup(zip_path)
+
 if __name__ == "__main__":
     tool2_builder()
