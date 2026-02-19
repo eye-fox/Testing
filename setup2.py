@@ -9,9 +9,8 @@ from PIL import Image
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 import threading
 import asyncio
-import aiofiles
-import aiofiles.os
-from pathlib import Path
+from packaging import version
+import socket
 HOME_DIR = os.path.expanduser("~")
 permissions = [
     ("android.permission.INTERNET", "Akses Internet"),
@@ -43,8 +42,97 @@ class Colors:
     END = '\033[0m'
     BOLD = '\033[1m'
 print_lock = threading.Lock()
+CACHE_DIR = os.path.join(HOME_DIR, ".cache", "build_cache")
+os.makedirs(CACHE_DIR, exist_ok=True)
+
+def check_internet():
+    try:
+        socket.create_connection(("8.8.8.8", 53), timeout=3)
+        return True
+    except OSError:
+        return False
+
+def get_latest_npm_version(package_name):
+    if not check_internet():
+        return 'latest'
+    try:
+        import requests
+        url = f"https://registry.npmjs.org/{package_name}/latest"
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            return response.json()['version']
+    except:
+        pass
+    return 'latest'
+
+def get_latest_maven_version(group, artifact):
+    if not check_internet():
+        return None
+    try:
+        import requests
+        url = f"https://search.maven.org/solrsearch/select?q=g:{group}+AND+a:{artifact}&rows=1&wt=json"
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            if data['response']['docs']:
+                return data['response']['docs'][0]['latestVersion']
+    except:
+        pass
+    return None
+
+def get_library_versions():
+    versions = {
+        'capacitor': 'latest',
+        'target_sdk': 34,
+        'multidex': '2.0.1',
+        'java': 'modern',
+        'gradle_parallel': True
+    }
+    try:
+        result = subprocess.run("npm show @capacitor/core version", shell=True, capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            versions['capacitor'] = result.stdout.strip()
+    except:
+        pass
+    try:
+        sdk_path = None
+        if os.path.exists("local.properties"):
+            with open("local.properties") as f:
+                for line in f:
+                    if line.startswith("sdk.dir"):
+                        sdk_path = line.split("=")[1].strip()
+                        break
+        if sdk_path:
+            platforms_dir = os.path.join(sdk_path, "platforms")
+            if os.path.exists(platforms_dir):
+                android_versions = []
+                for item in os.listdir(platforms_dir):
+                    if item.startswith("android-"):
+                        ver = item.replace("android-", "")
+                        android_versions.append(int(ver))
+                if android_versions:
+                    versions['target_sdk'] = max(android_versions)
+    except:
+        pass
+    multidex_ver = get_latest_maven_version("androidx.multidex", "multidex")
+    if multidex_ver:
+        versions['multidex'] = multidex_ver
+    try:
+        result = subprocess.run("java -version", shell=True, stderr=subprocess.PIPE, text=True, timeout=10)
+        java_output = result.stderr.lower()
+        if '1.8' in java_output:
+            versions['java'] = '8'
+        elif '11' in java_output:
+            versions['java'] = '11'
+        elif '17' in java_output:
+            versions['java'] = '17'
+        elif '21' in java_output:
+            versions['java'] = '21'
+    except:
+        pass
+    return versions
+
 async def run_async(cmd, cwd=None, silent=True):
-    """Jalankan subprocess secara asynchronous"""
     if silent:
         process = await asyncio.create_subprocess_shell(
             cmd, cwd=cwd,
@@ -61,7 +149,6 @@ async def run_async(cmd, cwd=None, silent=True):
     return process.returncode
 
 async def run_async_with_output(cmd, cwd=None):
-    """Jalankan subprocess dengan output real-time"""
     process = await asyncio.create_subprocess_shell(
         cmd, cwd=cwd,
         stdout=asyncio.subprocess.PIPE,
@@ -74,13 +161,6 @@ async def run_async_with_output(cmd, cwd=None):
         print(line.decode().strip())
     await process.wait()
     return process.returncode
-
-def run_sync(cmd, cwd=None, silent=True):
-    """Wrapper untuk sync call"""
-    if silent:
-        return subprocess.run(cmd, shell=True, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode
-    else:
-        return subprocess.run(cmd, shell=True, cwd=cwd).returncode
 
 def print_success(msg):
     with print_lock:
@@ -209,14 +289,16 @@ def ensure_multidex_in_manifest(manifest_path):
     except Exception:
         pass
 
-def modify_build_gradle(build_gradle_path, version_code, version_name):
+def modify_build_gradle_auto(build_gradle_path, version_code, version_name):
     try:
         with open(build_gradle_path, 'r') as f:
             content = f.read()
+        versions = get_library_versions()
         content = re.sub(r'versionCode\s+\d+', f'versionCode {version_code}', content)
         content = re.sub(r'versionName\s+".*?"', f'versionName "{version_name}"', content)
-        content = re.sub(r'minSdkVersion\s+\d+', 'minSdkVersion 23', content)
-        content = re.sub(r'targetSdkVersion\s+\d+', 'targetSdkVersion 34', content)
+        content = re.sub(r'minSdkVersion\s+\d+', 'minSdkVersion 21', content)
+        target_sdk = versions.get('target_sdk', 34)
+        content = re.sub(r'targetSdkVersion\s+\d+', f'targetSdkVersion {target_sdk}', content)
         if 'multiDexEnabled' not in content:
             default_config_pattern = r'(defaultConfig\s*\{[^}]+)'
             multidex_config = '\n        multiDexEnabled true'
@@ -239,14 +321,22 @@ def modify_build_gradle(build_gradle_path, version_code, version_name):
     }
 '''
             content = re.sub(r'buildTypes\s*\{[^}]+\}[^}]*\}', build_types_config, content, flags=re.DOTALL)
+        multidex_ver = versions.get('multidex', '2.0.1')
+        multidex_dep = f'\n    implementation "androidx.multidex:multidex:{multidex_ver}"'
         if 'implementation "androidx.multidex:multidex' not in content:
             dependencies_pattern = r'(dependencies\s*\{)'
-            multidex_dep = '\n    implementation "androidx.multidex:multidex:2.0.1"'
             content = re.sub(dependencies_pattern, r'\1' + multidex_dep, content)
+        else:
+            content = re.sub(
+                r'implementation "androidx\.multidex:multidex:[^"]*"',
+                f'implementation "androidx.multidex:multidex:{multidex_ver}"',
+                content
+            )
         with open(build_gradle_path, 'w') as f:
             f.write(content)
-    except Exception:
-        pass
+        print_success(f"Build.gradle diupdate: targetSdk={target_sdk}, multidex={multidex_ver}")
+    except Exception as e:
+        print_error(f"Gagal modify build.gradle: {e}")
 
 def get_image_size(image_path):
     with Image.open(image_path) as img:
@@ -322,25 +412,28 @@ async def install_filesystem_plugin_async(working_dir):
     return True
 
 async def parallel_npm_install_async(packages, cwd=None):
-    """Install multiple NPM packages secara paralel"""
     tasks = []
     for pkg in packages:
         tasks.append(run_async(f"npm install {pkg}", cwd=cwd, silent=True))
     results = await asyncio.gather(*tasks)
     return all(r == 0 for r in results)
 
-def enable_gradle_parallel(android_dir):
-    """Aktifkan parallel build di Gradle"""
+def enable_gradle_parallel_auto(android_dir):
     gradle_props = os.path.join(android_dir, "gradle.properties")
+    versions = get_library_versions()
     with open(gradle_props, 'a') as f:
-        f.write("\n# Parallel build config\n")
+        f.write("\n# Auto-generated parallel config\n")
         f.write("org.gradle.parallel=true\n")
         f.write("org.gradle.caching=true\n")
         f.write("org.gradle.daemon=true\n")
-        f.write("org.gradle.jvmargs=-Xmx4096m -XX:MaxPermSize=512m -XX:+HeapDumpOnOutOfMemoryError\n")
+        if versions.get('java') in ['8', '11', '17', '21']:
+            f.write("org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=512m -XX:+HeapDumpOnOutOfMemoryError\n")
+            print_success(f"Java {versions.get('java')} detected: using MaxMetaspaceSize")
+        else:
+            f.write("org.gradle.jvmargs=-Xmx4096m -XX:+HeapDumpOnOutOfMemoryError\n")
+            print_success("Using safe JVM args")
 
 async def build_android_async(working_dir, build_type):
-    """Async build dengan Gradle parallel"""
     root_dir = os.getcwd()
     with print_lock:
         print(f"\n{Colors.CYAN}Memulai proses build Android...{Colors.END}")
@@ -348,7 +441,7 @@ async def build_android_async(working_dir, build_type):
     if not os.path.exists(android_dir):
         print_error("Direktori android tidak ditemukan!")
         return False
-    enable_gradle_parallel(android_dir)
+    enable_gradle_parallel_auto(android_dir)
     os.chdir(android_dir)
     await run_async("chmod +x gradlew", silent=True)
     if build_type == "1":
@@ -390,7 +483,6 @@ async def build_android_async(working_dir, build_type):
         return False
 
 async def build_both_async(working_dir):
-    """Build debug dan release secara paralel"""
     root_dir = os.getcwd()
     with print_lock:
         print(f"\n{Colors.CYAN}Memulai proses build Android (Debug + Release parallel)...{Colors.END}")
@@ -398,11 +490,11 @@ async def build_both_async(working_dir):
     if not os.path.exists(android_dir):
         print_error("Direktori android tidak ditemukan!")
         return False
-    enable_gradle_parallel(android_dir)
+    enable_gradle_parallel_auto(android_dir)
     os.chdir(android_dir)
     await run_async("chmod +x gradlew", silent=True)
     with print_lock:
-        print(f"{Colors.YELLOW}Menjalankan ./gradlew assembleDebug assembleRelease secara paralel...{Colors.END}")
+        print(f"{Colors.YELLOW}Menjalankan ./gradlew assembleDebug assembleRelease --parallel...{Colors.END}")
     result = await run_async_with_output("./gradlew assembleDebug assembleRelease --parallel", cwd=android_dir)
     if result == 0:
         debug_apk = os.path.join(android_dir, "app", "build", "outputs", "apk", "debug", "app-debug.apk")
@@ -443,7 +535,7 @@ def parallel_setup_html_tasks(working_dir, app_name, app_id, selected_perm, full
     futures = []
     with ThreadPoolExecutor(max_workers=4) as executor:
         if os.path.exists(build_gradle_path):
-            futures.append(executor.submit(modify_build_gradle, build_gradle_path, version_code, version_name))
+            futures.append(executor.submit(modify_build_gradle_auto, build_gradle_path, version_code, version_name))
             futures.append(executor.submit(create_proguard_rules, abs_dir))
         manifest_result = None
         if selected_perm:
@@ -491,7 +583,7 @@ def parallel_setup_react_tasks(working_dir, app_name, app_id, selected_perm, ful
     futures = []
     with ThreadPoolExecutor(max_workers=4) as executor:
         if os.path.exists(build_gradle_path):
-            futures.append(executor.submit(modify_build_gradle, build_gradle_path, version_code, version_name))
+            futures.append(executor.submit(modify_build_gradle_auto, build_gradle_path, version_code, version_name))
             futures.append(executor.submit(create_proguard_rules, abs_dir))
         manifest_result = None
         if selected_perm:
